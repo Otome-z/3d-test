@@ -55,17 +55,8 @@ const demos: Array<{ key: DemoKey; title: string; desc: string }> = [
     }
 ]
 
-// 4
-// ----
-
-
-// ----------
-// 10
-// (4/10) * 2 - 1; = -(2/10)
-// (2/4) * 2 + 1 = 1
-
 /** 当前选中的 demo */
-const current = ref<DemoKey>('DemoLight')
+const current = ref<DemoKey>('vertex')
 
 /**
  * 动态加载组件（避免一次性加载全部，页面也更清爽）
