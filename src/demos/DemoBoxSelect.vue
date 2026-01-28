@@ -8,21 +8,66 @@ const selectionBox = ref<HTMLDivElement | null>(null)
 
 let three: ReturnType<typeof createThreeBase> | null = null
 const meshes: THREE.Mesh[] = []
-const selected: THREE.Object3D[] = []
+const selected: THREE.Mesh[] = []
 
 let isSelecting = false
 const startPoint = new THREE.Vector2()
+const OUTLINE_NAME = '__outline__'
 
-function updateSelection(objects: THREE.Object3D[]) {
+// 多选时的虚拟控制器（TransformControls attach 到它）
+const virtualControl = new THREE.Object3D();
+virtualControl.visible = false;
+
+let offsets: THREE.Vector3[] = [];
+
+let isDraggingGizmo = false
+
+function updateSelection(objects: THREE.Mesh[]) {
+  meshes.forEach((meshe) => {
+    const oldOutLineObj = meshe.getObjectByName(OUTLINE_NAME)
+    if (oldOutLineObj) {
+      meshe.remove(oldOutLineObj)
+    }
+  })
+
   selected.length = 0
   selected.push(...objects)
-  // demo：这里只更新选中集合（你也可以加高亮材质）
+  selected.forEach((mesh) => {
+    const outline = new THREE.Mesh(
+      mesh.geometry,
+      new THREE.MeshBasicMaterial({
+        color: 0xff0073,
+        side: THREE.BackSide
+      })
+    )
+    outline.name = OUTLINE_NAME;
+    outline.scale.multiplyScalar(1.02)
+    mesh.add(outline)
+  })
+
+  if (selected.length === 1) {
+    virtualControl.visible = false;
+    three?.transform.attach(selected[0])
+  } else {
+    const center = new THREE.Vector3();
+    selected.forEach((item) => center.add(item.position))
+    center.multiplyScalar(1 / selected.length)
+
+    virtualControl.position.copy(center);
+    virtualControl.rotation.set(0, 0, 0);
+    virtualControl.scale.set(1, 1, 1,)
+    virtualControl.visible = true
+
+    offsets = selected.map((item) => item.position.clone().sub(center))
+    three?.transform.attach(virtualControl);
+
+  }
 }
 
 onMounted(() => {
   const canvas = canvasRef.value!
   three = createThreeBase(canvas)
-  const { scene, camera, getRect, orbit } = three
+  const { scene, camera, getRect, orbit, transform } = three
 
   // demo meshes
   for (let x = -2; x <= 2; x++) {
@@ -34,7 +79,11 @@ onMounted(() => {
     scene.add(m)
   }
 
+  scene.add(virtualControl)
+
+
   const onDown = (ev: PointerEvent) => {
+    if (isDraggingGizmo) return;
     isSelecting = true
     orbit.enabled = false
     const rect = getRect()
@@ -50,7 +99,7 @@ onMounted(() => {
   }
 
   const onMove = (ev: PointerEvent) => {
-    if (!isSelecting || !selectionBox.value) return
+    if (!isSelecting || !selectionBox.value || isDraggingGizmo) return
     const rect = getRect()
     const cur = new THREE.Vector2(ev.clientX - rect.left, ev.clientY - rect.top)
 
@@ -66,7 +115,9 @@ onMounted(() => {
   }
 
   const onUp = (ev: PointerEvent) => {
-    if (!isSelecting) return
+    if (!isSelecting) {
+      return
+    }
     isSelecting = false
     orbit.enabled = true
     if (selectionBox.value) selectionBox.value.style.display = 'none'
@@ -80,7 +131,7 @@ onMounted(() => {
     const x2 = Math.max(startPoint.x, endX)
     const y2 = Math.max(startPoint.y, endY)
 
-    const picked: THREE.Object3D[] = []
+    const picked: THREE.Mesh[] = []
     meshes.forEach(obj => {
       const p = obj.position.clone().project(camera)
       const sx = ((p.x + 1) / 2) * rect.width
@@ -90,6 +141,7 @@ onMounted(() => {
     updateSelection(picked)
   }
 
+
   canvas.addEventListener('pointerdown', onDown)
   canvas.addEventListener('pointermove', onMove)
   canvas.addEventListener('pointerup', onUp)
@@ -98,6 +150,19 @@ onMounted(() => {
     canvas.removeEventListener('pointerdown', onDown)
     canvas.removeEventListener('pointermove', onMove)
     canvas.removeEventListener('pointerup', onUp)
+  })
+
+  transform.addEventListener('dragging-changed', (e: any) => {
+    isDraggingGizmo = e.value;
+  })
+  transform.addEventListener('objectChange', () => {
+    const selectedLength = selected.length;
+    if (selectedLength <= 1 || transform.object !== virtualControl) return;
+    selected.forEach((item, index) => {
+      item.position.copy(virtualControl.position).add(offsets[index]);
+      item.rotation.copy(virtualControl.rotation);
+      item.scale.copy(virtualControl.scale)
+    })
   })
 
   three.start()
@@ -116,9 +181,7 @@ onBeforeUnmount(() => {
   <div style="position: relative; width: 800px; height: 800px;">
     <div style="margin-bottom: 8px;">拖拽框选（这里只演示框选，不做 Transform）</div>
     <canvas ref="canvasRef" style="width: 800px; height: 800px;" />
-    <div
-      ref="selectionBox"
-      style="position:absolute; border:1px dashed #0ff; pointer-events:none; display:none; left:0; top:0;"
-    />
+    <div ref="selectionBox"
+      style="position:absolute; border:1px dashed #0ff; pointer-events:none; display:none; left:0; top:0;" />
   </div>
 </template>

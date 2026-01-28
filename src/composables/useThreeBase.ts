@@ -2,6 +2,7 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls'
+import { RGBELoader } from 'three/examples/jsm/loaders/RGBELoader'
 
 export type ThreeBase = {
   scene: THREE.Scene
@@ -16,9 +17,21 @@ export type ThreeBase = {
   start: () => void
   stop: () => void
   dispose: () => void
+  // ✅ 新增
+  setEnvironment: (options?: {
+    enabled?: boolean
+    hdrUrl?: string
+    background?: boolean
+    intensity?: number
+  }) => void
 }
 
 export function createThreeBase(canvas: HTMLCanvasElement): ThreeBase {
+  let envMap: THREE.Texture | null = null
+  let pmrem: THREE.PMREMGenerator | null = null
+  let envEnabled = false
+
+
   const scene = new THREE.Scene()
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 5000) // 视角(fov)=45°，宽高比(aspect)=1，近裁剪面(near)=0.1，远裁剪面(far)=5000
@@ -95,6 +108,53 @@ export function createThreeBase(canvas: HTMLCanvasElement): ThreeBase {
     renderer.dispose()
   }
 
+  const setEnvironment: ThreeBase['setEnvironment'] = ({
+    enabled = false,
+    hdrUrl,
+    background = false,
+    intensity = 1
+  } = {}) => {
+
+    // 关闭环境光照
+    if (!enabled) {
+      scene.environment = null
+      scene.background = null
+      envEnabled = false
+      return
+    }
+
+    // 已经启用过，就只改参数
+    if (envEnabled && envMap) {
+      scene.environment = envMap
+      scene.background = background ? envMap : null
+      return
+    }
+
+    if (!hdrUrl) {
+      console.warn('[ThreeBase] setEnvironment: hdrUrl is required when enabled = true')
+      return
+    }
+
+    pmrem = new THREE.PMREMGenerator(renderer)
+    pmrem.compileEquirectangularShader()
+
+    new RGBELoader().load(hdrUrl, (hdrTex) => {
+      envMap = pmrem!.fromEquirectangular(hdrTex).texture
+
+      scene.environment = envMap
+      scene.background = background ? envMap : null
+
+        // ⚠️ Three.js r152+：environmentIntensity
+        ; (scene as any).environmentIntensity = intensity
+
+      hdrTex.dispose()
+      pmrem!.dispose()
+      pmrem = null
+      envEnabled = true
+    })
+  }
+
+
   return {
     scene,
     camera,
@@ -107,6 +167,7 @@ export function createThreeBase(canvas: HTMLCanvasElement): ThreeBase {
     updateMouseFromEvent,
     start,
     stop,
-    dispose
+    dispose,
+    setEnvironment
   }
 }

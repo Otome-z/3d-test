@@ -13,4 +13,7 @@ import DemoIndex from './components/DemoIndex.vue'
 </template>
 
 <style scoped>
+.customClass {
+  color: #ff3344;
+}
 </style>

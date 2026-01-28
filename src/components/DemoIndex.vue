@@ -5,12 +5,17 @@ import { computed, defineAsyncComponent, ref } from 'vue'
  * Demo Key 列表：左侧菜单显示用
  * 你可以继续往这里加更多 demo
  */
-type DemoKey = 'transform' | 'grid' | 'selectOnly' | 'boxSelect' | 'vertex' | 'cut' | 'dif' | 'DemoEditableMesh'
+type DemoKey = 'transform' | 'grid' | 'selectOnly' | 'boxSelect' | 'vertex' | 'cut' | 'dif' | 'DemoEditableMesh' | 'DemoLight'
 
 const demos: Array<{ key: DemoKey; title: string; desc: string }> = [
     {
         key: 'transform',
         title: '平移/旋转/缩放',
+        desc: ''
+    },
+    {
+        key: 'DemoLight',
+        title: '灯光/颜色',
         desc: ''
     },
     {
@@ -25,7 +30,7 @@ const demos: Array<{ key: DemoKey; title: string; desc: string }> = [
     },
     {
         key: 'DemoEditableMesh',
-        title: '细分区别',
+        title: '数据结构',
         desc: ''
     },
     {
@@ -60,7 +65,7 @@ const demos: Array<{ key: DemoKey; title: string; desc: string }> = [
 // (2/4) * 2 + 1 = 1
 
 /** 当前选中的 demo */
-const current = ref<DemoKey>('dif')
+const current = ref<DemoKey>('DemoLight')
 
 /**
  * 动态加载组件（避免一次性加载全部，页面也更清爽）
@@ -84,6 +89,8 @@ const DemoComponent = computed(() => {
             return defineAsyncComponent(() => import('../demos/DemoGridDiffent.vue'))
         case 'DemoEditableMesh':
             return defineAsyncComponent(() => import('../demos/DemoEditableMesh.vue'))
+        case 'DemoLight':
+            return defineAsyncComponent(() => import('../demos/DemoLight.vue'))
         default:
             return defineAsyncComponent(() => import('../demos/DemoTransform.vue'))
     }

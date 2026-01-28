@@ -182,8 +182,8 @@ onBeforeUnmount(() => {
   cleanup.length = 0
 
   meshes.forEach(m => {
-    ;(m.geometry as THREE.BufferGeometry).dispose()
-    ;(m.material as THREE.Material).dispose()
+    ; (m.geometry as THREE.BufferGeometry).dispose()
+      ; (m.material as THREE.Material).dispose()
   })
 
   three?.dispose()
