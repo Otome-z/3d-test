@@ -138,7 +138,7 @@ export function createThreeBase(canvas: HTMLCanvasElement): ThreeBase {
     pmrem = new THREE.PMREMGenerator(renderer)
     pmrem.compileEquirectangularShader()
 
-    new RGBELoader().load(hdrUrl, (hdrTex) => {
+    new RGBELoader().load(hdrUrl, (hdrTex:any) => {
       envMap = pmrem!.fromEquirectangular(hdrTex).texture
 
       scene.environment = envMap

@@ -12,23 +12,46 @@ handle.visible = false
 const mode = ref<'vertex' | 'edge'>('vertex')
 
 let mesh!: THREE.Mesh
-
-// overlays（只 build 一次，切换 visible）
 let pointsOverlay!: THREE.Points
 let edgeOverlay!: THREE.LineSegments
 
-// 顶点/边选择状态
-let selectedIndex: number | null = null
-let selectedEdge: [number, number] | null = null
+let selectedVertexGroup: number[] | null = null
+let selectedEdgeGroups: [number[], number[]] | null = null
 
-// 边数据：每条边对应 mesh.position 里的两个顶点索引
+let coincidentVertexGroups: number[][] = []
+let groupIndexByVertexIndex: number[] = []
 let edgePairs: Array<[number, number]> = []
 
-// 边拖动需要：记录 handle 上次位置来算 delta
 const lastHandlePos = new THREE.Vector3()
+const cleanup: Array<() => void> = []
 
-/** 从 indexed 三角网格提取唯一边（无向边去重） */
-function buildUniqueEdgesFromIndexedGeometry(g: THREE.BufferGeometry) {
+function getVertexPositionKey(x: number, y: number, z: number) {
+  return `${x.toFixed(6)}_${y.toFixed(6)}_${z.toFixed(6)}`
+}
+
+function buildCoincidentVertexGroups(g: THREE.BufferGeometry) {
+  const pos = g.getAttribute('position') as THREE.BufferAttribute
+  const keyToGroup = new Map<string, number>()
+  const groups: number[][] = []
+  const vertexToGroup = new Array<number>(pos.count)
+
+  for (let i = 0; i < pos.count; i++) {
+    const key = getVertexPositionKey(pos.getX(i), pos.getY(i), pos.getZ(i))
+    let groupIndex = keyToGroup.get(key)
+    if (groupIndex == null) {
+      groupIndex = groups.length
+      keyToGroup.set(key, groupIndex)
+      groups.push([])
+    }
+
+    groups[groupIndex].push(i)
+    vertexToGroup[i] = groupIndex
+  }
+
+  return { groups, vertexToGroup }
+}
+
+function buildUniqueEdgesFromIndexedGeometry(g: THREE.BufferGeometry, vertexToGroup: number[]) {
   const index = g.getIndex()
   if (!index) return []
 
@@ -36,10 +59,15 @@ function buildUniqueEdgesFromIndexedGeometry(g: THREE.BufferGeometry) {
   const seen = new Set<string>()
 
   const addEdge = (a: number, b: number) => {
-    const i0 = Math.min(a, b)
-    const i1 = Math.max(a, b)
+    const ga = vertexToGroup[a]
+    const gb = vertexToGroup[b]
+    if (ga === gb) return
+
+    const i0 = Math.min(ga, gb)
+    const i1 = Math.max(ga, gb)
     const key = `${i0}_${i1}`
     if (seen.has(key)) return
+
     seen.add(key)
     pairs.push([i0, i1])
   }
@@ -52,10 +80,10 @@ function buildUniqueEdgesFromIndexedGeometry(g: THREE.BufferGeometry) {
     addEdge(b, c)
     addEdge(c, a)
   }
+
   return pairs
 }
 
-/** Points overlay：直接共享 mesh 的 position attribute，顶点变动自动反映 */
 function buildPointsOverlay(mesh: THREE.Mesh) {
   const g = mesh.geometry as THREE.BufferGeometry
   const ptsGeo = new THREE.BufferGeometry()
@@ -71,18 +99,15 @@ function buildPointsOverlay(mesh: THREE.Mesh) {
       depthWrite: false
     })
   )
+
   pts.renderOrder = 10
   pts.frustumCulled = false
   mesh.add(pts)
   return pts
 }
 
-/** Edge overlay：用 edgePairs 展开成 LineSegments 的 position */
 function buildEdgeOverlay(mesh: THREE.Mesh, edgePairs: Array<[number, number]>) {
-  const g = mesh.geometry as THREE.BufferGeometry
-  const pos = g.getAttribute('position') as THREE.BufferAttribute
-
-  const linePos = new Float32Array(edgePairs.length * 2 * 3) // 每条边 2 个点，每点 3 分量
+  const linePos = new Float32Array(edgePairs.length * 2 * 3)
   const lineGeo = new THREE.BufferGeometry()
   lineGeo.setAttribute('position', new THREE.BufferAttribute(linePos, 3))
 
@@ -96,44 +121,37 @@ function buildEdgeOverlay(mesh: THREE.Mesh, edgePairs: Array<[number, number]>) 
     })
   )
 
-  // 关键：让 raycaster 更容易点中线
-  // 这个阈值是“世界单位”，你可以按模型大小调
   line.frustumCulled = false
-
   mesh.add(line)
-
-  // 首次填充
   updateEdgeOverlayPositions(mesh, edgePairs, line)
-
   return line
 }
 
-/** 顶点变化后：把 mesh.position 重新拷贝到 edgeOverlay.position（展开的） */
 function updateEdgeOverlayPositions(mesh: THREE.Mesh, edgePairs: Array<[number, number]>, line: THREE.LineSegments) {
   const g = mesh.geometry as THREE.BufferGeometry
   const pos = g.getAttribute('position') as THREE.BufferAttribute
-  const linePos = (line.geometry.getAttribute('position') as THREE.BufferAttribute)
+  const linePos = line.geometry.getAttribute('position') as THREE.BufferAttribute
 
   let o = 0
   for (let i = 0; i < edgePairs.length; i++) {
-    const [a, b] = edgePairs[i]
-    // a
+    const [groupA, groupB] = edgePairs[i]
+    const a = coincidentVertexGroups[groupA][0]
+    const b = coincidentVertexGroups[groupB][0]
+
     linePos.setXYZ(o++, pos.getX(a), pos.getY(a), pos.getZ(a))
-    // b
     linePos.setXYZ(o++, pos.getX(b), pos.getY(b), pos.getZ(b))
   }
+
   linePos.needsUpdate = true
 }
 
-/** 切换模式：只切 visible，不重复 build */
 function applyModeVisibility() {
   const isVertex = mode.value === 'vertex'
   pointsOverlay.visible = isVertex
   edgeOverlay.visible = !isVertex
 
-  // 进入某模式时清理另一种选择
-  selectedIndex = null
-  selectedEdge = null
+  selectedVertexGroup = null
+  selectedEdgeGroups = null
   handle.visible = false
 }
 
@@ -141,38 +159,35 @@ onMounted(() => {
   three = createThreeBase(canvasRef.value!)
   const { scene, raycaster, camera, updateMouseFromEvent, transform } = three
 
-  // demo: 一个盒子
   const base = new THREE.BoxGeometry(150, 150, 150)
-  // 这里你原本 weld 的逻辑可以保留（不影响下面结构）
-  // 但确保最终是 indexed geometry（BoxGeometry 默认是 indexed）
   mesh = new THREE.Mesh(base, new THREE.MeshNormalMaterial({ side: THREE.DoubleSide }))
   scene.add(mesh)
 
-  // build overlays once
   pointsOverlay = buildPointsOverlay(mesh)
 
-  edgePairs = buildUniqueEdgesFromIndexedGeometry(mesh.geometry as THREE.BufferGeometry)
+  const groupedVertices = buildCoincidentVertexGroups(mesh.geometry as THREE.BufferGeometry)
+  coincidentVertexGroups = groupedVertices.groups
+  groupIndexByVertexIndex = groupedVertices.vertexToGroup
+  edgePairs = buildUniqueEdgesFromIndexedGeometry(mesh.geometry as THREE.BufferGeometry, groupIndexByVertexIndex)
   edgeOverlay = buildEdgeOverlay(mesh, edgePairs)
-  edgeOverlay.visible = false // 默认点模式
+  edgeOverlay.visible = false
 
   mesh.add(handle)
   applyModeVisibility()
 
-  // raycaster 参数：提高点线命中
   raycaster.params.Line = raycaster.params.Line || { threshold: 1 }
-  raycaster.params.Line.threshold = 6 // 世界单位阈值，模型越大可以越大
+  raycaster.params.Line.threshold = 6
 
   const onDown = (ev: PointerEvent) => {
     updateMouseFromEvent(ev)
     raycaster.setFromCamera(three!.mouse, camera)
 
     if (mode.value === 'vertex') {
-      // 点：用 points overlay 拾取
       const hit = raycaster.intersectObject(pointsOverlay, false)[0]
       if (!hit || hit.index == null) return
 
-      selectedIndex = hit.index
-      selectedEdge = null
+      selectedVertexGroup = coincidentVertexGroups[groupIndexByVertexIndex[hit.index]]
+      selectedEdgeGroups = null
 
       const g = mesh.geometry as THREE.BufferGeometry
       const pos = g.getAttribute('position') as THREE.BufferAttribute
@@ -181,31 +196,34 @@ onMounted(() => {
 
       handle.visible = true
       transform.attach(handle)
-    } else {
-      // 边：用 lineSegments 拾取
-      const hit = raycaster.intersectObject(edgeOverlay, false)[0]
-      if (!hit || hit.index == null) return
-
-      // hit.index 对应的是第几段线（segment）
-      const edge = edgePairs[hit.index]
-      if (!edge) return
-
-      selectedEdge = edge
-      selectedIndex = null
-
-      const [a, b] = edge
-      const g = mesh.geometry as THREE.BufferGeometry
-      const pos = g.getAttribute('position') as THREE.BufferAttribute
-      const ax = pos.getX(a), ay = pos.getY(a), az = pos.getZ(a)
-      const bx = pos.getX(b), by = pos.getY(b), bz = pos.getZ(b)
-
-      // handle 放在边中点
-      handle.position.set((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2)
-      lastHandlePos.copy(handle.position)
-
-      handle.visible = true
-      transform.attach(handle)
+      return
     }
+
+    const hit = raycaster.intersectObject(edgeOverlay, false)[0]
+    if (!hit || hit.index == null) return
+
+    const edge = edgePairs[hit.index]
+    if (!edge) return
+
+    selectedEdgeGroups = [coincidentVertexGroups[edge[0]], coincidentVertexGroups[edge[1]]]
+    selectedVertexGroup = null
+
+    const a = coincidentVertexGroups[edge[0]][0]
+    const b = coincidentVertexGroups[edge[1]][0]
+    const g = mesh.geometry as THREE.BufferGeometry
+    const pos = g.getAttribute('position') as THREE.BufferAttribute
+    const ax = pos.getX(a)
+    const ay = pos.getY(a)
+    const az = pos.getZ(a)
+    const bx = pos.getX(b)
+    const by = pos.getY(b)
+    const bz = pos.getZ(b)
+
+    handle.position.set((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2)
+    lastHandlePos.copy(handle.position)
+
+    handle.visible = true
+    transform.attach(handle)
   }
 
   canvasRef.value!.addEventListener('pointerdown', onDown)
@@ -214,43 +232,43 @@ onMounted(() => {
     const g = mesh.geometry as THREE.BufferGeometry
     const pos = g.getAttribute('position') as THREE.BufferAttribute
 
-    if (mode.value === 'vertex' && selectedIndex != null) {
-      pos.setXYZ(selectedIndex, handle.position.x, handle.position.y, handle.position.z)
+    if (mode.value === 'vertex' && selectedVertexGroup) {
+      for (const index of selectedVertexGroup) {
+        pos.setXYZ(index, handle.position.x, handle.position.y, handle.position.z)
+      }
+
       pos.needsUpdate = true
       g.computeVertexNormals()
-      updateEdgeOverlayPositions(mesh, edgePairs, edgeOverlay) // 让线跟着变
+      updateEdgeOverlayPositions(mesh, edgePairs, edgeOverlay)
       return
     }
 
-    if (mode.value === 'edge' && selectedEdge) {
-      const [a, b] = selectedEdge
-
-      // delta = 当前 handle - 上一次 handle
+    if (mode.value === 'edge' && selectedEdgeGroups) {
+      const [groupA, groupB] = selectedEdgeGroups
       const dx = handle.position.x - lastHandlePos.x
       const dy = handle.position.y - lastHandlePos.y
       const dz = handle.position.z - lastHandlePos.z
       if (dx === 0 && dy === 0 && dz === 0) return
 
-      // 两个端点一起移动
-      pos.setXYZ(a, pos.getX(a) + dx, pos.getY(a) + dy, pos.getZ(a) + dz)
-      pos.setXYZ(b, pos.getX(b) + dx, pos.getY(b) + dy, pos.getZ(b) + dz)
+      for (const index of groupA) {
+        pos.setXYZ(index, pos.getX(index) + dx, pos.getY(index) + dy, pos.getZ(index) + dz)
+      }
+
+      for (const index of groupB) {
+        pos.setXYZ(index, pos.getX(index) + dx, pos.getY(index) + dy, pos.getZ(index) + dz)
+      }
+
       pos.needsUpdate = true
-
-      // 更新 lastHandlePos
       lastHandlePos.copy(handle.position)
-
       g.computeVertexNormals()
       updateEdgeOverlayPositions(mesh, edgePairs, edgeOverlay)
-      return
     }
   })
 
   three.start()
-
   cleanup.push(() => canvasRef.value!.removeEventListener('pointerdown', onDown))
 })
 
-const cleanup: Array<() => void> = []
 onBeforeUnmount(() => {
   cleanup.forEach(fn => fn())
   cleanup.length = 0

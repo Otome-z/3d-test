@@ -5,9 +5,24 @@ import { computed, defineAsyncComponent, ref } from 'vue'
  * Demo Key 列表：左侧菜单显示用
  * 你可以继续往这里加更多 demo
  */
-type DemoKey = 'transform' | 'grid' | 'selectOnly' | 'boxSelect' | 'vertex' | 'cut' | 'dif' | 'DemoEditableMesh' | 'DemoLight'
+type DemoKey =
+    'transform'
+    | 'grid'
+    | 'selectOnly'
+    | 'boxSelect'
+    | 'vertex'
+    | 'cut'
+    | 'dif'
+    | 'DemoEditableMesh'
+    | 'DemoLight'
+    | 'DemoTest'
 
 const demos: Array<{ key: DemoKey; title: string; desc: string }> = [
+    {
+        key: 'DemoTest',
+        title: '测试',
+        desc: ''
+    },
     {
         key: 'transform',
         title: '平移/旋转/缩放',
@@ -82,6 +97,8 @@ const DemoComponent = computed(() => {
             return defineAsyncComponent(() => import('../demos/DemoEditableMesh.vue'))
         case 'DemoLight':
             return defineAsyncComponent(() => import('../demos/DemoLight.vue'))
+        case 'DemoTest':
+            return defineAsyncComponent(() => import('../demos/DemoTest.vue'))
         default:
             return defineAsyncComponent(() => import('../demos/DemoTransform.vue'))
     }
