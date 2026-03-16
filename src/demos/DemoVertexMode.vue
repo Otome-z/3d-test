@@ -3,6 +3,8 @@ import { ref, onMounted, onBeforeUnmount } from 'vue'
 import * as THREE from 'three'
 import { createThreeBase } from '@/composables/useThreeBase'
 
+type EditMode = 'vertex' | 'edge' | 'face'
+
 type FaceGroup = {
   // 合并后的逻辑面法线，用来判断哪些三角形属于同一个平面
   normal: THREE.Vector3
@@ -29,40 +31,31 @@ let three: ReturnType<typeof createThreeBase> | null = null
 const handle = new THREE.Object3D()
 handle.visible = false
 
-const mode = ref<'vertex' | 'edge'>('vertex')
+const mode = ref<EditMode>('vertex')
 
 let mesh!: THREE.Mesh
 let pointsOverlay!: THREE.Points
 let edgeOverlay!: THREE.LineSegments
 
-// Old code:
+// 旧逻辑：
 // let selectedIndex: number | null = null
 // let selectedEdge: [number, number] | null = null
 //
-// Why not keep it:
-// BoxGeometry-like meshes duplicate position indices at the same visual corner.
-// If we only edit one index, one drag only moves one copy and the point looks like it needs multiple drags.
+// 改动原因：
+// BoxGeometry 这类几何为了保留每个面的法线/UV，同一个视觉顶点通常会拆成多个 position 索引。
+// 如果只记录单个 index，那么拖一次只会移动其中一份数据，看起来就像同一个点要拖很多次。
 let selectedVertexGroup: number[] | null = null
 
-// Old code:
-// let selectedFaceGroupIndex: number | null = null
-//
-// Why change it again:
-// "Move the whole face" was still not the expected behavior.
-// The desired behavior is: select an outer edge of a logical face, hide the inner triangle diagonal,
-// and move only that selected outer edge so the face can deform into a trapezoid.
+// 线模式：只移动被点击外轮廓边的两个端点组，这样矩形面可以被拖成梯形。
 let selectedEdgeGroups: [number[], number[]] | null = null
+
+// 面模式：移动整个逻辑面的所有顶点组，这样正方体可以被拖成长方体。
+let selectedFaceGroupIndex: number | null = null
 
 let coincidentVertexGroups: number[][] = []
 let groupIndexByVertexIndex: number[] = []
 
-// Old code:
-// let edgePairs: Array<[number, number]> = []
-//
-// Why still keep this:
-// It is still useful as the full set of visual edges from the indexed geometry.
-// But the edge mode overlay only shows boundary edges of merged coplanar faces,
-// so inner triangulation diagonals stay hidden and unselectable.
+// 保留所有视觉边的基础拓扑信息
 let edgePairs: Array<[number, number]> = []
 // 共面的三角形会被合并成一个逻辑面，例如 BoxGeometry 的一个矩形面其实由两个三角形组成
 let faceGroups: FaceGroup[] = []
@@ -87,7 +80,7 @@ function buildCoincidentVertexGroups(g: THREE.BufferGeometry) {
 
   for (let i = 0; i < pos.count; i++) {
     // BufferGeometry 的 position 里，同一个视觉点可能出现多次
-    // 这里把它们归到同一个 group，后面拖点/拖边时要整组一起改
+    // 这里把它们归到同一个 group，后面拖点/拖边/拖面时要整组一起改
     const key = getVertexPositionKey(pos.getX(i), pos.getY(i), pos.getZ(i))
     let groupIndex = keyToGroup.get(key)
     if (groupIndex == null) {
@@ -113,7 +106,6 @@ function buildUniqueEdgesFromIndexedGeometry(g: THREE.BufferGeometry, vertexToGr
   const addEdge = (a: number, b: number) => {
     const ga = vertexToGroup[a]
     const gb = vertexToGroup[b]
-    // 同组说明是同一个视觉顶点，不应该形成边
     if (ga === gb) return
 
     const i0 = Math.min(ga, gb)
@@ -326,12 +318,20 @@ function updateEdgeOverlayPositions(mesh: THREE.Mesh, entries: EdgeOverlayEntry[
 
 function applyModeVisibility() {
   const isVertex = mode.value === 'vertex'
+  const isEdge = mode.value === 'edge'
+
   pointsOverlay.visible = isVertex
-  edgeOverlay.visible = !isVertex
+  edgeOverlay.visible = isEdge
 
   selectedVertexGroup = null
   selectedEdgeGroups = null
+  selectedFaceGroupIndex = null
   handle.visible = false
+}
+
+function setMode(nextMode: EditMode) {
+  mode.value = nextMode
+  applyModeVisibility()
 }
 
 onMounted(() => {
@@ -348,10 +348,8 @@ onMounted(() => {
   coincidentVertexGroups = groupedVertices.groups
   groupIndexByVertexIndex = groupedVertices.vertexToGroup
 
-  // 所有视觉边，主要作为基础拓扑信息保留
   edgePairs = buildUniqueEdgesFromIndexedGeometry(mesh.geometry as THREE.BufferGeometry, groupIndexByVertexIndex)
 
-  // 把共面的三角形合并成逻辑面，供线模式使用
   const groupedFaces = buildFaceGroups(mesh.geometry as THREE.BufferGeometry, groupIndexByVertexIndex)
   faceGroups = groupedFaces.faceGroups
   triangleToFaceGroup = groupedFaces.triangleToFaceGroup
@@ -376,14 +374,15 @@ onMounted(() => {
       const hit = raycaster.intersectObject(pointsOverlay, false)[0]
       if (!hit || hit.index == null) return
 
-      // Old code:
+      // 旧逻辑：
       // selectedIndex = hit.index
       //
-      // Why not keep it:
-      // hit.index is only one position index, not the whole visual corner.
-      // On a box, one visible corner usually maps to multiple position indices.
+      // 改动原因：
+      // hit.index 只是当前命中的那一个 position 索引，不是“视觉上的那个点”。
+      // 对 box 这种模型，一个角点往往对应 3 份索引，所以这里要取整组。
       selectedVertexGroup = coincidentVertexGroups[groupIndexByVertexIndex[hit.index]]
       selectedEdgeGroups = null
+      selectedFaceGroupIndex = null
 
       const g = mesh.geometry as THREE.BufferGeometry
       const pos = g.getAttribute('position') as THREE.BufferAttribute
@@ -395,70 +394,74 @@ onMounted(() => {
       return
     }
 
-    // Old code:
-    // const hit = raycaster.intersectObject(edgeOverlay, false)[0]
-    // const segmentIndex = Math.floor(hit.index / 2)
-    // const edge = edgePairs[segmentIndex]
-    //
-    // Why not keep it:
-    // Edge mode should ignore the inner diagonal from triangulation.
-    // We first detect which logical face was clicked on the mesh, then choose the nearest boundary edge on that face.
     const hit = raycaster.intersectObject(mesh, false)[0]
     if (!hit || hit.faceIndex == null) return
 
     // 先根据命中的三角形，找到它所在的逻辑面
     const faceGroupIndex = triangleToFaceGroup[hit.faceIndex]
     const faceGroup = faceGroups[faceGroupIndex]
-    if (!faceGroup || faceGroup.boundaryEdges.length === 0) return
-
-    selectedVertexGroup = null
+    if (!faceGroup) return
 
     const g = mesh.geometry as THREE.BufferGeometry
     const pos = g.getAttribute('position') as THREE.BufferAttribute
-    const localHitPoint = mesh.worldToLocal(hit.point.clone())
 
-    let nearestEdge = faceGroup.boundaryEdges[0]
-    let minDistanceSq = Infinity
+    if (mode.value === 'edge') {
+      // 线模式不直接拾取三角形边线，而是先找到逻辑面，再取距离点击点最近的外轮廓边。
+      const localHitPoint = mesh.worldToLocal(hit.point.clone())
+      let nearestEdge = faceGroup.boundaryEdges[0]
+      let minDistanceSq = Infinity
 
-    for (const edge of faceGroup.boundaryEdges) {
-      const a = coincidentVertexGroups[edge[0]][0]
-      const b = coincidentVertexGroups[edge[1]][0]
-      const start = new THREE.Vector3(pos.getX(a), pos.getY(a), pos.getZ(a))
-      const end = new THREE.Vector3(pos.getX(b), pos.getY(b), pos.getZ(b))
-      const closest = new THREE.Line3(start, end).closestPointToPoint(localHitPoint, true, new THREE.Vector3())
-      const distanceSq = closest.distanceToSquared(localHitPoint)
+      for (const edge of faceGroup.boundaryEdges) {
+        const a = coincidentVertexGroups[edge[0]][0]
+        const b = coincidentVertexGroups[edge[1]][0]
+        const start = new THREE.Vector3(pos.getX(a), pos.getY(a), pos.getZ(a))
+        const end = new THREE.Vector3(pos.getX(b), pos.getY(b), pos.getZ(b))
+        const closest = new THREE.Line3(start, end).closestPointToPoint(localHitPoint, true, new THREE.Vector3())
+        const distanceSq = closest.distanceToSquared(localHitPoint)
 
-      if (distanceSq < minDistanceSq) {
-        // 用户点在面上时，取距离点击点最近的那条外轮廓边作为编辑目标
-        minDistanceSq = distanceSq
-        nearestEdge = edge
+        if (distanceSq < minDistanceSq) {
+          minDistanceSq = distanceSq
+          nearestEdge = edge
+        }
       }
+
+      selectedVertexGroup = null
+      selectedFaceGroupIndex = null
+      selectedEdgeGroups = [
+        coincidentVertexGroups[nearestEdge[0]],
+        coincidentVertexGroups[nearestEdge[1]]
+      ]
+
+      const a = coincidentVertexGroups[nearestEdge[0]][0]
+      const b = coincidentVertexGroups[nearestEdge[1]][0]
+      const ax = pos.getX(a)
+      const ay = pos.getY(a)
+      const az = pos.getZ(a)
+      const bx = pos.getX(b)
+      const by = pos.getY(b)
+      const bz = pos.getZ(b)
+
+      handle.position.set((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2)
+      lastHandlePos.copy(handle.position)
+      handle.visible = true
+      transform.attach(handle)
+      return
     }
 
-    // Old code:
-    // selectedFaceGroupIndex = faceGroupIndex
-    // move all vertexGroups of the face
-    //
-    // Why change it:
-    // The expected behavior is not rigid face translation.
-    // Only the selected outer edge should move, so the quad can deform into a trapezoid.
-    selectedEdgeGroups = [
-      coincidentVertexGroups[nearestEdge[0]],
-      coincidentVertexGroups[nearestEdge[1]]
-    ]
+    // 面模式：直接选中整个逻辑面，把控制器放到逻辑面中心。
+    selectedVertexGroup = null
+    selectedEdgeGroups = null
+    selectedFaceGroupIndex = faceGroupIndex
 
-    const a = coincidentVertexGroups[nearestEdge[0]][0]
-    const b = coincidentVertexGroups[nearestEdge[1]][0]
-    const ax = pos.getX(a)
-    const ay = pos.getY(a)
-    const az = pos.getZ(a)
-    const bx = pos.getX(b)
-    const by = pos.getY(b)
-    const bz = pos.getZ(b)
+    const center = new THREE.Vector3()
+    for (const vertexGroup of faceGroup.vertexGroups) {
+      const vertexIndex = coincidentVertexGroups[vertexGroup][0]
+      center.add(new THREE.Vector3(pos.getX(vertexIndex), pos.getY(vertexIndex), pos.getZ(vertexIndex)))
+    }
+    center.multiplyScalar(1 / faceGroup.vertexGroups.length)
 
-    handle.position.set((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2)
+    handle.position.copy(center)
     lastHandlePos.copy(handle.position)
-
     handle.visible = true
     transform.attach(handle)
   }
@@ -470,11 +473,11 @@ onMounted(() => {
     const pos = g.getAttribute('position') as THREE.BufferAttribute
 
     if (mode.value === 'vertex' && selectedVertexGroup) {
-      // Old code:
+      // 旧逻辑：
       // pos.setXYZ(selectedIndex, handle.position.x, handle.position.y, handle.position.z)
       //
-      // Why not keep it:
-      // Updating only one duplicate index leaves the other copies behind.
+      // 改动原因：
+      // 这里只改一个索引会导致同一个视觉顶点只移动一部分，剩余重复索引还留在原位。
       for (const index of selectedVertexGroup) {
         pos.setXYZ(index, handle.position.x, handle.position.y, handle.position.z)
       }
@@ -491,21 +494,36 @@ onMounted(() => {
       const dz = handle.position.z - lastHandlePos.z
       if (dx === 0 && dy === 0 && dz === 0) return
 
-      // Old code:
-      // const movedVertexGroups = faceGroups[selectedFaceGroupIndex].vertexGroups
-      // move every vertex on the whole face
-      //
-      // Why change it:
-      // To get the trapezoid effect, only the selected boundary edge should move.
-      // The opposite edge stays in place, and adjacent faces deform naturally through shared vertices.
+      // 线模式：只移动被选中边的两个端点组，这样矩形面会被拉成梯形/平行四边形。
       const [groupA, groupB] = selectedEdgeGroups
-      // 只移动被选中边的两个端点组，这样矩形面就会被拉成梯形/平行四边形
       for (const index of groupA) {
         pos.setXYZ(index, pos.getX(index) + dx, pos.getY(index) + dy, pos.getZ(index) + dz)
       }
 
       for (const index of groupB) {
         pos.setXYZ(index, pos.getX(index) + dx, pos.getY(index) + dy, pos.getZ(index) + dz)
+      }
+
+      pos.needsUpdate = true
+      lastHandlePos.copy(handle.position)
+      g.computeVertexNormals()
+      updateEdgeOverlayPositions(mesh, edgeOverlayEntries, edgeOverlay)
+      return
+    }
+
+    if (mode.value === 'face' && selectedFaceGroupIndex != null) {
+      const dx = handle.position.x - lastHandlePos.x
+      const dy = handle.position.y - lastHandlePos.y
+      const dz = handle.position.z - lastHandlePos.z
+      if (dx === 0 && dy === 0 && dz === 0) return
+
+      // 面模式：移动整个逻辑面的所有顶点组。
+      // 对立方体来说，拖动正面会让它整体前后伸缩，正方体就能变成长方体。
+      const movedVertexGroups = faceGroups[selectedFaceGroupIndex].vertexGroups
+      for (const vertexGroup of movedVertexGroups) {
+        for (const index of coincidentVertexGroups[vertexGroup]) {
+          pos.setXYZ(index, pos.getX(index) + dx, pos.getY(index) + dy, pos.getZ(index) + dz)
+        }
       }
 
       pos.needsUpdate = true
@@ -525,21 +543,16 @@ onBeforeUnmount(() => {
   three?.dispose()
   three = null
 })
-
-const toggleMode = () => {
-  mode.value = mode.value === 'vertex' ? 'edge' : 'vertex'
-  applyModeVisibility()
-}
 </script>
 
 <template>
   <div style="width: 800px;">
     <div style="margin-bottom: 8px;">
-      <button @click="toggleMode">
-        {{ mode === 'vertex' ? '切换到线模式' : '切换到点模式' }}
-      </button>
+      <button @click="setMode('vertex')">点模式</button>
+      <button @click="setMode('edge')" style="margin-left: 8px;">线模式</button>
+      <button @click="setMode('face')" style="margin-left: 8px;">面模式</button>
       <div style="margin-top: 8px;">
-        当前模式：{{ mode === 'vertex' ? '点模式' : '线模式' }}
+        当前模式：{{ mode === 'vertex' ? '点模式' : mode === 'edge' ? '线模式' : '面模式' }}
       </div>
     </div>
     <canvas ref="canvasRef" style="width: 800px; height: 800px;" />
