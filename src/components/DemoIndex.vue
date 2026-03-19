@@ -4,6 +4,7 @@ import { computed, defineAsyncComponent, ref } from 'vue'
 type DemoKey =
   | 'coords'
   | 'vectors'
+  | 'topologyOps'
   | 'transform'
   | 'grid'
   | 'selectOnly'
@@ -25,6 +26,11 @@ const demos: Array<{ key: DemoKey; title: string; desc: string }> = [
     key: 'vectors',
     title: '向量 / 法线 / 平面',
     desc: 'dot / cross / normal / plane / 点到线段 / 点到平面'
+  },
+  {
+    key: 'topologyOps',
+    title: '删除 / 合并 / 拆分',
+    desc: '删除顶点 / 删除面 / 合并顶点 / 边中插点 / 一个面拆两个面'
   },
   {
     key: 'transform',
@@ -78,7 +84,7 @@ const demos: Array<{ key: DemoKey; title: string; desc: string }> = [
   }
 ]
 
-const current = ref<DemoKey>('coords')
+const current = ref<DemoKey>('topologyOps')
 
 const DemoComponent = computed(() => {
   switch (current.value) {
@@ -86,6 +92,8 @@ const DemoComponent = computed(() => {
       return defineAsyncComponent(() => import('../demos/DemoCoordinateSpaces.vue'))
     case 'vectors':
       return defineAsyncComponent(() => import('../demos/DemoVectorMath.vue'))
+    case 'topologyOps':
+      return defineAsyncComponent(() => import('../demos/DemoDeleteMergeSplit.vue'))
     case 'transform':
       return defineAsyncComponent(() => import('../demos/DemoOnlyTransform.vue'))
     case 'selectOnly':
@@ -152,8 +160,8 @@ const currentMeta = computed(() => demos.find(d => d.key === current.value)!)
 
       <div style="margin-top: 12px; font-size: 12px; opacity: 0.75; line-height: 1.5;">
         <div>提示：</div>
-        <div>每个 demo 都是独立最小实现，方便你逐个消化。</div>
-        <div>坐标系专题建议先看，再去看选择、编辑、切线这些交互 demo。</div>
+        <div>基础专题建议按“坐标系 -> 向量 -> 拓扑操作”的顺序看。</div>
+        <div>每个 demo 都尽量是独立最小实现，方便你逐个拆开理解。</div>
       </div>
     </aside>
 
