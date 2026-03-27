@@ -6,6 +6,7 @@ type DemoKey =
   | 'vectors'
   | 'topologyOps'
   | 'transform'
+  | 'mirror'
   | 'grid'
   | 'selectOnly'
   | 'boxSelect'
@@ -14,7 +15,6 @@ type DemoKey =
   | 'dif'
   | 'DemoEditableMesh'
   | 'DemoLight'
-  | 'DemoTest'
 
 const demos: Array<{ key: DemoKey; title: string; desc: string }> = [
   {
@@ -36,6 +36,11 @@ const demos: Array<{ key: DemoKey; title: string; desc: string }> = [
     key: 'transform',
     title: '平移 / 旋转 / 缩放',
     desc: ''
+  },
+  {
+    key: 'mirror',
+    title: '镜像',
+    desc: 'mirror preview + apply mirror edit'
   },
   {
     key: 'DemoLight',
@@ -77,14 +82,9 @@ const demos: Array<{ key: DemoKey; title: string; desc: string }> = [
     title: 'Cut（翻对角线）',
     desc: '点两次吸附顶点 -> turn edge（改 index）'
   },
-  {
-    key: 'DemoTest',
-    title: '测试',
-    desc: ''
-  }
 ]
 
-const current = ref<DemoKey>('topologyOps')
+const current = ref<DemoKey>('mirror')
 
 const DemoComponent = computed(() => {
   switch (current.value) {
@@ -96,6 +96,8 @@ const DemoComponent = computed(() => {
       return defineAsyncComponent(() => import('../demos/DemoDeleteMergeSplit.vue'))
     case 'transform':
       return defineAsyncComponent(() => import('../demos/DemoOnlyTransform.vue'))
+    case 'mirror':
+      return defineAsyncComponent(() => import('../demos/DemoMirrorMode.vue'))
     case 'selectOnly':
       return defineAsyncComponent(() => import('../demos/DemoSelectOnly.vue'))
     case 'boxSelect':
@@ -112,8 +114,6 @@ const DemoComponent = computed(() => {
       return defineAsyncComponent(() => import('../demos/DemoEditableMesh.vue'))
     case 'DemoLight':
       return defineAsyncComponent(() => import('../demos/DemoLight.vue'))
-    case 'DemoTest':
-      return defineAsyncComponent(() => import('../demos/DemoTest.vue'))
     default:
       return defineAsyncComponent(() => import('../demos/DemoTransform.vue'))
   }
