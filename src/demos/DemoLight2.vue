@@ -14,13 +14,13 @@ const helperVisible = ref(true)
 const autoRotateLight = ref(true)
 const ambientIntensity = ref(0.35)
 const directionalIntensity = ref(1.2)
-const pointIntensity = ref(1.5)
+const pointIntensity = ref(8)
 
 const info = reactive({
   materialName: 'MeshStandardMaterial',
   materialDesc: '同时能看到高光、粗糙度和金属度，最适合演示灯光变化。',
   lightSummary: '当前同时开启了环境光、平行光和点光源。',
-  pointPosition: '(180, 150, 120)'
+  pointPosition: '(90, 110, 120)'
 })
 
 let three: ReturnType<typeof createThreeBase> | null = null
@@ -30,8 +30,11 @@ let directionalLight: THREE.DirectionalLight | null = null
 let directionalHelper: THREE.DirectionalLightHelper | null = null
 let pointLight: THREE.PointLight | null = null
 let pointLightHelper: THREE.PointLightHelper | null = null
+let pointLightHandle: THREE.Mesh | null = null
 let animationFrame = 0
 let pointLightAngle = 0
+let isDraggingLight = false
+const cleanup: Array<() => void> = []
 
 const demoMeshes: THREE.Mesh[] = []
 
@@ -51,8 +54,8 @@ function createMaterial(kind: MaterialKey) {
     default:
       return new THREE.MeshStandardMaterial({
         color: 0xf8f9fa,
-        roughness: 0.28,
-        metalness: 0.58
+        roughness: 0.38,
+        metalness: 0.08
       })
   }
 }
@@ -100,7 +103,7 @@ function applyMaterialToMeshes() {
 }
 
 function updateLights() {
-  if (!ambientLight || !directionalLight || !pointLight || !pointLightHelper || !directionalHelper) return
+  if (!ambientLight || !directionalLight || !pointLight || !pointLightHelper || !directionalHelper || !pointLightHandle) return
 
   ambientLight.visible = ambientEnabled.value
   ambientLight.intensity = ambientIntensity.value
@@ -113,9 +116,18 @@ function updateLights() {
   pointLight.visible = pointEnabled.value
   pointLight.intensity = pointIntensity.value
   pointLightHelper.visible = helperVisible.value && pointEnabled.value
+  pointLightHandle.visible = pointEnabled.value
   pointLightHelper.update()
 
   updateLightSummary()
+}
+
+function syncPointLightVisuals() {
+  if (!pointLight || !pointLightHelper || !pointLightHandle) return
+
+  pointLightHandle.position.copy(pointLight.position)
+  pointLightHelper.update()
+  info.pointPosition = `(${pointLight.position.x.toFixed(1)}, ${pointLight.position.y.toFixed(1)}, ${pointLight.position.z.toFixed(1)})`
 }
 
 function buildStage() {
@@ -175,7 +187,7 @@ function disposeStage() {
 function startLightMotion() {
   const tick = () => {
     animationFrame = requestAnimationFrame(tick)
-    if (!pointLight || !pointLightHelper) return
+    if (!pointLight || !pointLightHelper || !pointLightHandle) return
 
     if (autoRotateLight.value) {
       pointLightAngle += 0.01
@@ -184,8 +196,7 @@ function startLightMotion() {
         135 + Math.sin(pointLightAngle * 1.7) * 45,
         Math.sin(pointLightAngle) * 150
       )
-      pointLightHelper.update()
-      info.pointPosition = `(${pointLight.position.x.toFixed(1)}, ${pointLight.position.y.toFixed(1)}, ${pointLight.position.z.toFixed(1)})`
+      syncPointLightVisuals()
     }
   }
 
@@ -194,7 +205,7 @@ function startLightMotion() {
 
 onMounted(() => {
   three = createThreeBase(canvasRef.value!)
-  const { scene, camera, orbit, renderer } = three
+  const { scene, camera, orbit, renderer, raycaster, updateMouseFromEvent, transform } = three
 
   camera.position.set(320, 220, 360)
   orbit.target.set(0, 0, 0)
@@ -214,8 +225,8 @@ onMounted(() => {
   directionalHelper = new THREE.DirectionalLightHelper(directionalLight, 38, 0xffe066)
   scene.add(directionalHelper)
 
-  pointLight = new THREE.PointLight(0xfff3bf, pointIntensity.value, 900, 2)
-  pointLight.position.set(80, 80, 80)
+  pointLight = new THREE.PointLight(0xfff3bf, pointIntensity.value, 0, 1.4)
+  pointLight.position.set(90, 110, 120)
   pointLight.castShadow = true
   scene.add(pointLight)
 
@@ -228,9 +239,52 @@ onMounted(() => {
   )
   pointLight.add(pointGlow)
 
+  pointLightHandle = new THREE.Mesh(
+    new THREE.SphereGeometry(12, 24, 24),
+    new THREE.MeshStandardMaterial({
+      color: 0xff922b,
+      emissive: 0x7a2e00,
+      metalness: 0.1,
+      roughness: 0.35
+    })
+  )
+  pointLightHandle.position.copy(pointLight.position)
+  pointLightHandle.userData.kind = 'point-light-handle'
+  scene.add(pointLightHandle)
+
   buildStage()
   applyMaterialToMeshes()
+  syncPointLightVisuals()
   updateLights()
+
+  transform.mode = 'translate'
+  transform.addEventListener('dragging-changed', (event: any) => {
+    isDraggingLight = event.value
+    if (event.value) autoRotateLight.value = false
+  })
+  transform.addEventListener('objectChange', () => {
+    if (!pointLight || !pointLightHandle) return
+    pointLight.position.copy(pointLightHandle.position)
+    syncPointLightVisuals()
+  })
+
+  const onPointerDown = (event: PointerEvent) => {
+    if (!three || !pointLightHandle || isDraggingLight) return
+
+    updateMouseFromEvent(event)
+    raycaster.setFromCamera(three.mouse, camera)
+    const hit = raycaster.intersectObject(pointLightHandle, false)[0]
+
+    if (hit) {
+      transform.attach(pointLightHandle)
+      return
+    }
+
+    transform.detach()
+  }
+
+  canvasRef.value!.addEventListener('pointerdown', onPointerDown)
+  cleanup.push(() => canvasRef.value?.removeEventListener('pointerdown', onPointerDown))
   startLightMotion()
   three.start()
 })
@@ -247,11 +301,12 @@ watch(
 )
 
 watch(autoRotateLight, () => {
-  if (!pointLight) return
-  info.pointPosition = `(${pointLight.position.x.toFixed(1)}, ${pointLight.position.y.toFixed(1)}, ${pointLight.position.z.toFixed(1)})`
+  syncPointLightVisuals()
 })
 
 onBeforeUnmount(() => {
+  cleanup.forEach(fn => fn())
+  cleanup.length = 0
   cancelAnimationFrame(animationFrame)
   disposeStage()
 
@@ -275,6 +330,13 @@ onBeforeUnmount(() => {
     pointLightHelper.parent?.remove(pointLightHelper)
     pointLightHelper.dispose()
     pointLightHelper = null
+  }
+
+  if (pointLightHandle) {
+    pointLightHandle.parent?.remove(pointLightHandle)
+    pointLightHandle.geometry.dispose()
+    ;(pointLightHandle.material as THREE.Material).dispose()
+    pointLightHandle = null
   }
 
   if (pointLight) {
@@ -344,7 +406,7 @@ onBeforeUnmount(() => {
         <div style="margin-top:8px;">平行光强度：{{ directionalIntensity.toFixed(2) }}</div>
         <input v-model.number="directionalIntensity" type="range" min="0" max="3" step="0.05" style="width:100%;" />
         <div style="margin-top:8px;">点光源强度：{{ pointIntensity.toFixed(2) }}</div>
-        <input v-model.number="pointIntensity" type="range" min="0" max="4" step="0.05" style="width:100%;" />
+        <input v-model.number="pointIntensity" type="range" min="0" max="20" step="0.1" style="width:100%;" />
       </div>
 
       <div style="border:1px solid #2a2a2a; border-radius:10px; padding:12px; line-height:1.75;">
