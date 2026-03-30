@@ -125,9 +125,6 @@ function createCuboidVertices(center: THREE.Vector3, size: THREE.Vector3) {
   const hy = size.y / 2
   const hz = size.z / 2
 
-  console.log({
-    hx,hy,hz
-  })
   const corners = [
     [-hx, -hy, -hz],
     [hx, -hy, -hz],

@@ -7,6 +7,7 @@ type DemoKey =
   | 'topologyOps'
   | 'transform'
   | 'mirror'
+  | 'light2'
   | 'grid'
   | 'selectOnly'
   | 'boxSelect'
@@ -48,6 +49,11 @@ const demos: Array<{ key: DemoKey; title: string; desc: string }> = [
     desc: ''
   },
   {
+    key: 'light2',
+    title: '光源 / 材质对比',
+    desc: 'AmbientLight / DirectionalLight / PointLight / PointLightHelper'
+  },
+  {
     key: 'grid',
     title: '格子测试',
     desc: ''
@@ -81,7 +87,7 @@ const demos: Array<{ key: DemoKey; title: string; desc: string }> = [
     key: 'cut',
     title: 'Cut（翻对角线）',
     desc: '点两次吸附顶点 -> turn edge（改 index）'
-  },
+  }
 ]
 
 const current = ref<DemoKey>('mirror')
@@ -114,6 +120,8 @@ const DemoComponent = computed(() => {
       return defineAsyncComponent(() => import('../demos/DemoEditableMesh.vue'))
     case 'DemoLight':
       return defineAsyncComponent(() => import('../demos/DemoLight.vue'))
+    case 'light2':
+      return defineAsyncComponent(() => import('../demos/DemoLight2.vue'))
     default:
       return defineAsyncComponent(() => import('../demos/DemoTransform.vue'))
   }
@@ -161,7 +169,7 @@ const currentMeta = computed(() => demos.find(d => d.key === current.value)!)
       <div style="margin-top: 12px; font-size: 12px; opacity: 0.75; line-height: 1.5;">
         <div>提示：</div>
         <div>基础专题建议按“坐标系 -> 向量 -> 拓扑操作”的顺序看。</div>
-        <div>每个 demo 都尽量是独立最小实现，方便你逐个拆开理解。</div>
+        <div>每个 demo 都尽量保持最小实现，方便逐个拆开理解。</div>
       </div>
     </aside>
 
