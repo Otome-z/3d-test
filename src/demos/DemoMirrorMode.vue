@@ -16,16 +16,18 @@ type EditableObject = {
   name: string
   role: ObjectRole
   vertices: EditableVertex[]
+  geometry: THREE.BufferGeometry
+  geometryPosition: THREE.BufferAttribute
+  edgeGeometry: THREE.BufferGeometry
+  edgePosition: THREE.BufferAttribute
   mesh: THREE.Mesh
   edges: THREE.LineSegments
   markerGroup: THREE.Group
   mirrorPlane: MirrorPlane | null
   mirrorOfId: number | null
   mirroredById: number | null
-}
-
-type QuadFace = {
-  verts: [number, number, number, number]
+  dirtyVertexIds: Set<number>
+  topologyDirty: boolean
 }
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
@@ -39,19 +41,37 @@ const info = reactive({
   selectedVertex: '未选择',
   mirrorState: '先选择镜像面，再选择物体生成镜像。',
   mirrorPair: '暂无镜像关系',
-  lastAction: '点击场景中的物体以选中，然后使用右侧按钮。',
+  lastAction: '点击场景中的物体进行选择，再使用右侧镜像操作。',
   selectedBounds: '',
   mirrorBounds: ''
 })
 
-const cubeFaces: QuadFace[] = [
-  { verts: [0, 1, 2, 3] },
-  { verts: [4, 7, 6, 5] },
-  { verts: [0, 4, 5, 1] },
-  { verts: [1, 5, 6, 2] },
-  { verts: [2, 6, 7, 3] },
-  { verts: [3, 7, 4, 0] }
+const cubeFaces: Array<[number, number, number, number]> = [
+  [0, 1, 2, 3],
+  [4, 7, 6, 5],
+  [0, 4, 5, 1],
+  [1, 5, 6, 2],
+  [2, 6, 7, 3],
+  [3, 7, 4, 0]
 ]
+
+const cubeEdges: Array<[number, number]> = [
+  [0, 1],
+  [1, 2],
+  [2, 3],
+  [3, 0],
+  [4, 5],
+  [5, 6],
+  [6, 7],
+  [7, 4],
+  [0, 4],
+  [1, 5],
+  [2, 6],
+  [3, 7]
+]
+
+const meshIndex = cubeFaces.flatMap(([a, b, c, d]) => [a, b, c, a, c, d])
+const edgeIndex = cubeEdges.flatMap(([a, b]) => [a, b])
 
 let three: ReturnType<typeof createThreeBase> | null = null
 let planeMesh: THREE.Mesh | null = null
@@ -59,11 +79,11 @@ const handle = new THREE.Object3D()
 const cleanup: Array<() => void> = []
 
 const editableObjects = new Map<number, EditableObject>()
-const markerToObjectId = new Map<THREE.Object3D, number>()
 let nextObjectId = 1
 let selectedObjectId: number | null = null
 let selectedVertexId: number | null = null
 let isDraggingGizmo = false
+let infoDirty = false
 
 function planeLabel(plane: MirrorPlane) {
   if (plane === 'yz') return 'YZ 面（x = 0）'
@@ -83,36 +103,6 @@ function reflectPoint(point: THREE.Vector3, plane: MirrorPlane) {
   return new THREE.Vector3(point.x, point.y, -point.z)
 }
 
-function buildGeometry(vertices: EditableVertex[]) {
-  const positions: number[] = []
-
-  for (const face of cubeFaces) {
-    const [a, b, c, d] = face.verts.map(index => vertices[index].position)
-    positions.push(
-      a.x, a.y, a.z,
-      b.x, b.y, b.z,
-      c.x, c.y, c.z,
-      a.x, a.y, a.z,
-      c.x, c.y, c.z,
-      d.x, d.y, d.z
-    )
-  }
-
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
-  geometry.computeVertexNormals()
-  geometry.computeBoundingBox()
-  geometry.computeBoundingSphere()
-  return geometry
-}
-
-function createEdges(geometry: THREE.BufferGeometry, color: number) {
-  return new THREE.LineSegments(
-    new THREE.EdgesGeometry(geometry),
-    new THREE.LineBasicMaterial({ color })
-  )
-}
-
 function cloneVertices(vertices: EditableVertex[]) {
   return vertices.map(vertex => ({
     id: vertex.id,
@@ -124,29 +114,47 @@ function createCuboidVertices(center: THREE.Vector3, size: THREE.Vector3) {
   const hx = size.x / 2
   const hy = size.y / 2
   const hz = size.z / 2
-
   const corners = [
     [-hx, -hy, -hz],
     [hx, -hy, -hz],
     [hx, hy, -hz],
     [-hx, hy, -hz],
-
-    [-hx, hy, hz],
     [-hx, -hy, hz],
-    [hx, -hy, hz],
+    [-hx, hy, hz],
     [hx, hy, hz],
-
-
-    // [-hx, -hy, hz],
-    // [-hx, hy, hz],
-    // [hx, hy, hz],
-    // [hx, -hy, hz]
+    [hx, -hy, hz],
   ] as const
 
   return corners.map(([x, y, z], index) => ({
     id: index,
     position: new THREE.Vector3(center.x + x, center.y + y, center.z + z)
   }))
+}
+
+function fillVertexPositionArray(target: Float32Array, vertices: EditableVertex[]) {
+  let offset = 0
+  for (const vertex of vertices) {
+    target[offset++] = vertex.position.x
+    target[offset++] = vertex.position.y
+    target[offset++] = vertex.position.z
+  }
+}
+
+function createIndexedGeometry(vertices: EditableVertex[], index: number[]) {
+  const geometry = new THREE.BufferGeometry()
+  const positions = new Float32Array(vertices.length * 3)
+  fillVertexPositionArray(positions, vertices)
+  const position = new THREE.BufferAttribute(positions, 3)
+  position.setUsage(THREE.DynamicDrawUsage)
+  geometry.setAttribute('position', position)
+  geometry.setIndex(index)
+  geometry.computeBoundingBox()
+  geometry.computeBoundingSphere()
+  return { geometry, position }
+}
+
+function writeVertexToAttribute(attribute: THREE.BufferAttribute, vertexId: number, position: THREE.Vector3) {
+  attribute.setXYZ(vertexId, position.x, position.y, position.z)
 }
 
 function getObjectById(id: number | null) {
@@ -169,19 +177,59 @@ function getSourceObject(object: EditableObject | null) {
   return getObjectById(object.mirrorOfId)
 }
 
-function updateObjectGeometry(object: EditableObject) {
-  const nextGeometry = buildGeometry(object.vertices)
-  object.mesh.geometry.dispose()
-  object.mesh.geometry = nextGeometry
+function markInfoDirty() {
+  infoDirty = true
+}
 
-  object.edges.geometry.dispose()
-  object.edges.geometry = new THREE.EdgesGeometry(nextGeometry)
+function markObjectVerticesDirty(object: EditableObject, vertexIds: number[]) {
+  vertexIds.forEach(id => object.dirtyVertexIds.add(id))
+  markInfoDirty()
+}
 
+function markObjectTopologyDirty(object: EditableObject) {
+  object.topologyDirty = true
+  object.dirtyVertexIds.clear()
+  markInfoDirty()
+}
+
+function flushObjectGeometry(object: EditableObject) {
+  if (object.topologyDirty) {
+    fillVertexPositionArray(object.geometryPosition.array as Float32Array, object.vertices)
+    fillVertexPositionArray(object.edgePosition.array as Float32Array, object.vertices)
+    object.geometryPosition.needsUpdate = true
+    object.edgePosition.needsUpdate = true
+    object.geometry.computeVertexNormals()
+    object.geometry.computeBoundingBox()
+    object.geometry.computeBoundingSphere()
+    object.edgeGeometry.computeBoundingBox()
+    object.edgeGeometry.computeBoundingSphere()
+    object.topologyDirty = false
+  } else if (object.dirtyVertexIds.size > 0) {
+    object.dirtyVertexIds.forEach(vertexId => {
+      const logicalVertex = object.vertices[vertexId]
+      writeVertexToAttribute(object.geometryPosition, vertexId, logicalVertex.position)
+      writeVertexToAttribute(object.edgePosition, vertexId, logicalVertex.position)
+    })
+    object.geometryPosition.needsUpdate = true
+    object.edgePosition.needsUpdate = true
+    object.geometry.computeVertexNormals()
+    object.geometry.computeBoundingBox()
+    object.geometry.computeBoundingSphere()
+    object.edgeGeometry.computeBoundingBox()
+    object.edgeGeometry.computeBoundingSphere()
+  } else {
+    return
+  }
+
+  object.dirtyVertexIds.clear()
   object.vertices.forEach(vertex => {
     const marker = object.markerGroup.children[vertex.id] as THREE.Mesh | undefined
-    if (!marker) return
-    marker.position.copy(vertex.position)
+    if (marker) marker.position.copy(vertex.position)
   })
+}
+
+function flushDirtyGeometry() {
+  editableObjects.forEach(object => flushObjectGeometry(object))
 }
 
 function setMarkerColors(object: EditableObject) {
@@ -220,8 +268,8 @@ function refreshAllMarkerStyles() {
 function updateBoundsText() {
   const selected = getSelectedObject()
   const mirror = getMirrorPartner(selected)
-  const selectedBox = selected?.mesh.geometry.boundingBox ?? null
-  const mirrorBox = mirror?.mesh.geometry.boundingBox ?? null
+  const selectedBox = selected?.geometry.boundingBox ?? null
+  const mirrorBox = mirror?.geometry.boundingBox ?? null
 
   info.selectedBounds = selectedBox
     ? `min(${selectedBox.min.x.toFixed(1)}, ${selectedBox.min.y.toFixed(1)}, ${selectedBox.min.z.toFixed(1)}) / max(${selectedBox.max.x.toFixed(1)}, ${selectedBox.max.y.toFixed(1)}, ${selectedBox.max.z.toFixed(1)})`
@@ -261,6 +309,11 @@ function updateMirrorPairText() {
 }
 
 function syncInfo() {
+  if (infoDirty) {
+    flushDirtyGeometry()
+    infoDirty = false
+  }
+
   const selected = getSelectedObject()
   info.selectedObject = selected ? selected.name : '未选择'
   info.selectedVertex = selectedVertexId == null ? '未选择' : `V${selectedVertexId}`
@@ -310,9 +363,12 @@ function createEditableObject(options: {
 }) {
   if (!three) throw new Error('three is not ready')
 
-  const geometry = buildGeometry(options.vertices)
+  const meshData = createIndexedGeometry(options.vertices, meshIndex)
+  meshData.geometry.computeVertexNormals()
+  const edgeData = createIndexedGeometry(options.vertices, edgeIndex)
+
   const mesh = new THREE.Mesh(
-    geometry,
+    meshData.geometry,
     new THREE.MeshStandardMaterial({
       color: options.color,
       metalness: 0.05,
@@ -322,7 +378,10 @@ function createEditableObject(options: {
       side: THREE.DoubleSide
     })
   )
-  const edges = createEdges(geometry, options.edgeColor)
+  const edges = new THREE.LineSegments(
+    edgeData.geometry,
+    new THREE.LineBasicMaterial({ color: options.edgeColor })
+  )
   const markerGroup = new THREE.Group()
 
   const object: EditableObject = {
@@ -330,12 +389,18 @@ function createEditableObject(options: {
     name: options.name,
     role: options.role,
     vertices: cloneVertices(options.vertices),
+    geometry: meshData.geometry,
+    geometryPosition: meshData.position,
+    edgeGeometry: edgeData.geometry,
+    edgePosition: edgeData.position,
     mesh,
     edges,
     markerGroup,
     mirrorPlane: null,
     mirrorOfId: null,
-    mirroredById: null
+    mirroredById: null,
+    dirtyVertexIds: new Set(),
+    topologyDirty: false
   }
 
   mesh.userData.objectId = object.id
@@ -350,7 +415,6 @@ function createEditableObject(options: {
     marker.userData.vertexId = vertex.id
     marker.userData.objectId = object.id
     markerGroup.add(marker)
-    markerToObjectId.set(marker, object.id)
   })
 
   markerGroup.visible = false
@@ -358,21 +422,23 @@ function createEditableObject(options: {
   three.scene.add(mesh)
   three.scene.add(edges)
   three.scene.add(markerGroup)
+  markObjectTopologyDirty(object)
   return object
 }
 
 function disposeObject(object: EditableObject) {
   editableObjects.delete(object.id)
-  object.mesh.geometry.dispose()
+  object.geometry.dispose()
+  object.edgeGeometry.dispose()
   ;(object.mesh.material as THREE.Material).dispose()
-  object.edges.geometry.dispose()
   ;(object.edges.material as THREE.Material).dispose()
+
   object.markerGroup.children.forEach(child => {
-    markerToObjectId.delete(child)
-    const mesh = child as THREE.Mesh
-    mesh.geometry.dispose()
-    ;(mesh.material as THREE.Material).dispose()
+    const marker = child as THREE.Mesh
+    marker.geometry.dispose()
+    ;(marker.material as THREE.Material).dispose()
   })
+
   object.mesh.parent?.remove(object.mesh)
   object.edges.parent?.remove(object.edges)
   object.markerGroup.parent?.remove(object.markerGroup)
@@ -428,7 +494,7 @@ function applyMirrorToObject(object: EditableObject, plane: MirrorPlane) {
     partner.vertices[index].position.copy(reflectPoint(vertex.position, plane))
   })
 
-  updateObjectGeometry(partner)
+  markObjectTopologyDirty(partner)
   partner.mirrorPlane = plane
   object.mirrorPlane = plane
 }
@@ -451,15 +517,14 @@ function generateMirror() {
 
   if (existingMirror) {
     applyMirrorToObject(source, selectedPlane.value)
-    source.mirrorPlane = selectedPlane.value
-    existingMirror.mirrorPlane = selectedPlane.value
     existingMirror.name = `${source.name} Mirror`
-    info.lastAction = `已重新按 ${planeLabel(selectedPlane.value)} 更新 ${source.name} 的镜像体。`
+    info.lastAction = `已按 ${planeLabel(selectedPlane.value)} 更新 ${source.name} 的镜像体。`
   } else {
     const mirroredVertices = source.vertices.map(vertex => ({
       id: vertex.id,
       position: reflectPoint(vertex.position, selectedPlane.value)
     }))
+
     const mirror = createEditableObject({
       name: `${source.name} Mirror`,
       role: 'mirror',
@@ -489,7 +554,7 @@ function enterMirrorEdit() {
   const partner = getMirrorPartner(selected)
   if (!partner) {
     mirrorEditEnabled.value = false
-    info.lastAction = `${selected.name} 还没有通过“镜像生成”建立对应镜像，无法进入镜像编辑。`
+    info.lastAction = `${selected.name} 还没有建立对应镜像，无法进入镜像编辑。`
     syncInfo()
     return
   }
@@ -501,10 +566,10 @@ function enterMirrorEdit() {
 
 function exitMirrorEdit() {
   mirrorEditEnabled.value = false
-  info.lastAction = '已退出镜像编辑。'
   selectedVertexId = null
   handle.visible = false
   three?.transform.detach()
+  info.lastAction = '已退出镜像编辑。'
   syncInfo()
 }
 
@@ -513,14 +578,14 @@ function applyHandleToVertex() {
   if (!selected || selectedVertexId == null) return
 
   selected.vertices[selectedVertexId].position.copy(handle.position)
-  updateObjectGeometry(selected)
+  markObjectVerticesDirty(selected, [selectedVertexId])
 
   if (mirrorEditEnabled.value) {
     const partner = getMirrorPartner(selected)
     const plane = selected.mirrorPlane ?? partner?.mirrorPlane ?? null
     if (partner && plane) {
       partner.vertices[selectedVertexId].position.copy(reflectPoint(handle.position, plane))
-      updateObjectGeometry(partner)
+      markObjectVerticesDirty(partner, [selectedVertexId])
     }
   }
 
@@ -528,8 +593,7 @@ function applyHandleToVertex() {
 }
 
 function resetDemo() {
-  const objects = [...editableObjects.values()]
-  objects.forEach(disposeObject)
+  ;[...editableObjects.values()].forEach(disposeObject)
   selectedObjectId = null
   selectedVertexId = null
   mirrorEditEnabled.value = false
@@ -613,19 +677,18 @@ onMounted(() => {
 
     if (mirrorEditEnabled.value && selectedObjectId != null) {
       const selected = getSelectedObject()
-      const markerHits = raycaster.intersectObjects(selected?.markerGroup.children ?? [], false)
-      const markerHit = markerHits[0]
+      const markerHit = raycaster.intersectObjects(selected?.markerGroup.children ?? [], false)[0]
       if (markerHit) {
         selectVertex(markerHit.object.userData.vertexId as number)
         return
       }
     }
 
-    const meshHits = raycaster.intersectObjects(
-      [...editableObjects.values()].flatMap(object => [object.mesh]),
+    const meshHit = raycaster.intersectObjects(
+      [...editableObjects.values()].map(object => object.mesh),
       false
-    )
-    const meshHit = meshHits[0]
+    )[0]
+
     if (!meshHit) {
       clearSelection()
       return
@@ -646,7 +709,6 @@ onBeforeUnmount(() => {
 
   ;[...editableObjects.values()].forEach(disposeObject)
   editableObjects.clear()
-  markerToObjectId.clear()
 
   if (planeMesh) {
     planeMesh.geometry.dispose()
@@ -668,7 +730,7 @@ onBeforeUnmount(() => {
         <button @click="selectedPlane = 'xz'" style="margin-left:6px;">镜像面：XZ</button>
         <button @click="selectedPlane = 'xy'" style="margin-left:6px;">镜像面：XY</button>
         <span style="margin-left:12px; opacity:0.82;">
-          当前镜像基准面：{{ info.selectedPlaneLabel }}，都以世界原点处的基准面为镜像面。
+          当前镜像基准面：{{ info.selectedPlaneLabel }}，都以世界原点处的基准面作为镜像面。
         </span>
       </div>
 
@@ -679,6 +741,10 @@ onBeforeUnmount(() => {
         <button @click="resetDemo" style="margin-left:6px;">重置</button>
       </div>
 
+      <div style="margin-bottom:8px; opacity:0.82; line-height:1.7;">
+        这版底层已经改成“索引缓冲 + 脏顶点更新”。拖动时只更新变脏的顶点 attribute，不再反复 dispose / new geometry。
+      </div>
+
       <div style="width:800px; height:620px; border:1px solid #2a2a2a; border-radius:10px; overflow:hidden;">
         <canvas ref="canvasRef" style="width:800px; height:620px; display:block;" />
       </div>
@@ -687,10 +753,10 @@ onBeforeUnmount(() => {
     <div style="width:420px; display:flex; flex-direction:column; gap:12px;">
       <div style="border:1px solid #2a2a2a; border-radius:10px; padding:12px; line-height:1.75;">
         <div style="font-weight:700; margin-bottom:10px;">操作流程</div>
-        <div>1. 先点上方按钮选择世界镜像面：YZ / XZ / XY。</div>
-        <div>2. 再点击场景中的物体，然后点“镜像生成”。</div>
-        <div>3. 如果该物体已有镜像，再点“镜像编辑”，拖动顶点时两边会同步更新。</div>
-        <div>4. 如果没有对应镜像，点击“镜像编辑”会直接提示。</div>
+        <div>1. 先选择世界镜像面：YZ / XZ / XY。</div>
+        <div>2. 点击场景中的物体，然后点击“镜像生成”。</div>
+        <div>3. 如果该物体已有镜像，再点击“镜像编辑”。</div>
+        <div>4. 进入镜像编辑后，点击顶点并拖动，两边对应点会同步更新。</div>
       </div>
 
       <div style="border:1px solid #2a2a2a; border-radius:10px; padding:12px; line-height:1.75;">
@@ -710,6 +776,13 @@ onBeforeUnmount(() => {
         <div>镜像关系：{{ info.mirrorPair }}</div>
         <div>当前物体包围盒：{{ info.selectedBounds }}</div>
         <div>镜像物体包围盒：{{ info.mirrorBounds }}</div>
+      </div>
+
+      <div style="border:1px solid #2a2a2a; border-radius:10px; padding:12px; line-height:1.75;">
+        <div style="font-weight:700; margin-bottom:10px;">这版底层重点</div>
+        <div>固定拓扑时：只更新 position attribute。</div>
+        <div>整体变化时：标记 topology dirty，然后整块刷新 buffer。</div>
+        <div>索引缓冲复用：mesh 和 edges 的 index 都固定复用。</div>
       </div>
 
       <div style="border:1px solid #2a2a2a; border-radius:10px; padding:12px; line-height:1.75;">

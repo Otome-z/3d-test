@@ -7,6 +7,7 @@ type DemoKey =
   | 'topologyOps'
   | 'transform'
   | 'mirror'
+  | 'dirtyFlags'
   | 'light2'
   | 'grid'
   | 'selectOnly'
@@ -42,6 +43,11 @@ const demos: Array<{ key: DemoKey; title: string; desc: string }> = [
     key: 'mirror',
     title: '镜像',
     desc: 'mirror preview + apply mirror edit'
+  },
+  {
+    key: 'dirtyFlags',
+    title: '脏标记 / Buffer',
+    desc: 'dirtyVertexIds / topologyDirty / flush / indexed geometry'
   },
   {
     key: 'DemoLight',
@@ -104,6 +110,8 @@ const DemoComponent = computed(() => {
       return defineAsyncComponent(() => import('../demos/DemoOnlyTransform.vue'))
     case 'mirror':
       return defineAsyncComponent(() => import('../demos/DemoMirrorMode.vue'))
+    case 'dirtyFlags':
+      return defineAsyncComponent(() => import('../demos/DemoDirtyFlags.vue'))
     case 'selectOnly':
       return defineAsyncComponent(() => import('../demos/DemoSelectOnly.vue'))
     case 'boxSelect':
@@ -169,7 +177,7 @@ const currentMeta = computed(() => demos.find(d => d.key === current.value)!)
       <div style="margin-top: 12px; font-size: 12px; opacity: 0.75; line-height: 1.5;">
         <div>提示：</div>
         <div>基础专题建议按“坐标系 -> 向量 -> 拓扑操作”的顺序看。</div>
-        <div>每个 demo 都尽量保持最小实现，方便逐个拆开理解。</div>
+        <div>如果你想理解底层更新逻辑，建议直接看“脏标记 / Buffer”。</div>
       </div>
     </aside>
 
