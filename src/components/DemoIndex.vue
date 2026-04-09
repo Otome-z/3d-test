@@ -4,6 +4,10 @@ import { computed, defineAsyncComponent, ref } from 'vue'
 type DemoKey =
   | 'coords'
   | 'vectors'
+  | 'curves'
+  | 'lathe'
+  | 'shape'
+  | 'extrude'
   | 'topologyOps'
   | 'transform'
   | 'mirror'
@@ -17,6 +21,7 @@ type DemoKey =
   | 'dif'
   | 'DemoEditableMesh'
   | 'DemoLight'
+  | 'customTest'
 
 const demos: Array<{ key: DemoKey; title: string; desc: string }> = [
   {
@@ -28,6 +33,26 @@ const demos: Array<{ key: DemoKey; title: string; desc: string }> = [
     key: 'vectors',
     title: '向量 / 法线 / 平面',
     desc: 'dot / cross / normal / plane / 点到线段 / 点到平面'
+  },
+  {
+    key: 'curves',
+    title: '曲线 Curve',
+    desc: '2D / 3D 曲线、选项卡切换、双曲线对比、控制点编辑'
+  },
+  {
+    key: 'lathe',
+    title: 'LatheGeometry',
+    desc: '用 2D 轮廓绕 Y 轴旋转，生成旋转成型几何体'
+  },
+  {
+    key: 'shape',
+    title: 'ShapeGeometry',
+    desc: '用二维闭合轮廓直接填充成面，可包含 holes 镂空'
+  },
+  {
+    key: 'extrude',
+    title: 'ExtrudeGeometry',
+    desc: '把二维轮廓挤出厚度，生成有体积的立体几何'
   },
   {
     key: 'topologyOps',
@@ -93,10 +118,15 @@ const demos: Array<{ key: DemoKey; title: string; desc: string }> = [
     key: 'cut',
     title: 'Cut（翻对角线）',
     desc: '点两次吸附顶点 -> turn edge（改 index）'
+  },
+  {
+    key: 'customTest',
+    title: '自定义测试',
+    desc: '自定义测试'
   }
 ]
 
-const current = ref<DemoKey>('mirror')
+const current = ref<DemoKey>('curves')
 
 const DemoComponent = computed(() => {
   switch (current.value) {
@@ -104,6 +134,14 @@ const DemoComponent = computed(() => {
       return defineAsyncComponent(() => import('../demos/DemoCoordinateSpaces.vue'))
     case 'vectors':
       return defineAsyncComponent(() => import('../demos/DemoVectorMath.vue'))
+    case 'curves':
+      return defineAsyncComponent(() => import('../demos/DemoCurves.vue'))
+    case 'lathe':
+      return defineAsyncComponent(() => import('../demos/DemoLatheGeometry.vue'))
+    case 'shape':
+      return defineAsyncComponent(() => import('../demos/DemoShapeGeometry.vue'))
+    case 'extrude':
+      return defineAsyncComponent(() => import('../demos/DemoExtrudeGeometry.vue'))
     case 'topologyOps':
       return defineAsyncComponent(() => import('../demos/DemoDeleteMergeSplit.vue'))
     case 'transform':
@@ -130,6 +168,8 @@ const DemoComponent = computed(() => {
       return defineAsyncComponent(() => import('../demos/DemoLight.vue'))
     case 'light2':
       return defineAsyncComponent(() => import('../demos/DemoLight2.vue'))
+    case 'customTest':
+      return defineAsyncComponent(() => import('../demos/DemoCustomTest.vue'))
     default:
       return defineAsyncComponent(() => import('../demos/DemoTransform.vue'))
   }
@@ -176,8 +216,8 @@ const currentMeta = computed(() => demos.find(d => d.key === current.value)!)
 
       <div style="margin-top: 12px; font-size: 12px; opacity: 0.75; line-height: 1.5;">
         <div>提示：</div>
-        <div>基础专题建议按“坐标系 -> 向量 -> 拓扑操作”的顺序看。</div>
-        <div>如果你想理解底层更新逻辑，建议直接看“脏标记 / Buffer”。</div>
+        <div>基础专题建议按“坐标系 -> 向量 -> 曲线 -> 拓扑操作”的顺序看。</div>
+        <div>如果你想理解底层更新逻辑，可以看“脏标记 / Buffer”。</div>
       </div>
     </aside>
 
