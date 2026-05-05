@@ -13,11 +13,13 @@ let animationId: number
 
 // Mesh parameters
 const Nx = 16 // Number of longitudinal wires
-const Nz = 18 // Number of transverse wires
+const Nz = 18 // Number of transverse wire PAIRS
 const spacingX = 1.0
 const spacingZ = 1.0
-const radius = 0.15
-const crimpAmp = 0.28 // Amplitude of transverse crimp
+const radiusLong = 0.12
+const radiusTransverse = 0.10
+const crimpAmp = 0.28 // Amplitude of transverse crimp (y-axis)
+const zWobbleAmp = 0.15 // Amplitude of Z-axis wobble so the two lines twist around each other
 
 const startX = -((Nx - 1) * spacingX) / 2
 const startZ = -((Nz - 1) * spacingZ) / 2
@@ -27,9 +29,30 @@ function surfaceY(x: number, z: number): number {
   return 3.0 * Math.exp(-(x * x + z * z) / 25)
 }
 
-// Easing for sine wave (flattens tops and bottoms slightly)
-function easeCrimp(t: number): number {
-  return Math.sin(t) // simple sine
+// Z-shaped wave function for Y height
+function zWave(t: number): number {
+  let n = (t / Math.PI) % 2
+  if (n < 0) n += 2
+
+  const flatRatio = 0.4
+  const slopeRatio = 1.0 - flatRatio
+
+  if (n < flatRatio / 2) return 1.0
+  if (n < 1 - flatRatio / 2) {
+    const p = (n - flatRatio / 2) / slopeRatio
+    return 1.0 - 2.0 * p
+  }
+  if (n < 1 + flatRatio / 2) return -1.0
+  if (n < 2 - flatRatio / 2) {
+    const p = (n - (1 + flatRatio / 2)) / slopeRatio
+    return -1.0 + 2.0 * p
+  }
+  return 1.0
+}
+
+// Simple sine for Z wobble (they move left and right slightly to cross each other)
+function zWobble(t: number): number {
+  return Math.sin(t)
 }
 
 onMounted(() => {
@@ -93,7 +116,7 @@ onMounted(() => {
   })
 
   // 1. Longitudinal wires (straight down z axis, bending with macro surface)
-  const lengthZ = Nz * spacingZ + 6 // Extends out further
+  const lengthZ = Nz * spacingZ + 6
   const startLongZ = -lengthZ / 2
   for (let i = 0; i < Nx; i++) {
     const x = startX + i * spacingX
@@ -107,15 +130,14 @@ onMounted(() => {
     }
 
     const curve = new THREE.CatmullRomCurve3(points)
-    const geometry = new THREE.TubeGeometry(curve, steps, radius * 0.8, 12, false)
+    const geometry = new THREE.TubeGeometry(curve, steps, radiusLong, 12, false)
     const mesh = new THREE.Mesh(geometry, materialLong)
     scene.add(mesh)
   }
 
-  // 2. Transverse wires (crimped over and under longitudinal wires)
-  // They run along X
+  // 2. Transverse wire PAIRS (two intertwined zigzag wires)
   for (let j = 0; j < Nz; j++) {
-    const z = startZ + j * spacingZ
+    const baseZ = startZ + j * spacingZ
 
     // Choose material based on pattern matching the image
     let mat = materialWhite
@@ -123,44 +145,61 @@ onMounted(() => {
     if (j === 7 || j === 12) mat = materialGrey
     if (j === 9) mat = materialYellow
 
-    // Calculate length, offset for aesthetic stagger
-    // Some wires extend further than others
     let lengthX = Nx * spacingX + 8
     let offset = 0
     if (j % 3 === 0) offset = 2
     if (j % 5 === 0) offset = -1
 
     const localStartX = -lengthX / 2 + offset
-    const points = []
-    const steps = 200
+    const steps = 300 // Higher resolution for tight bends
+
+    // Wire A (Starts high, goes low)
+    const pointsA = []
+    // Wire B (Starts low, goes high)
+    const pointsB = []
 
     for (let k = 0; k <= steps; k++) {
       const x = localStartX + (k / steps) * lengthX
 
-      // Base macro height
-      let y = surfaceY(x, z)
+      // Base macro height at this x, z
+      let baseY = surfaceY(x, baseZ)
 
-      // Micro height (crimp)
+      let yA = baseY
+      let yB = baseY
+      let zA = baseZ
+      let zB = baseZ
+
       // Only crimp if x is within the bounds of the longitudinal wires
       if (x > startX - spacingX && x < startX + (Nx - 1) * spacingX + spacingX) {
-        // We calculate phase based on x coordinate relative to longitudinal wires
         // phase should be PI for every spacingX
         const phase = ((x - startX) / spacingX) * Math.PI
 
-        // Alternating crimp based on j (even/odd)
-        const sign = (j % 2 === 0) ? 1 : -1
+        // Z-Wave for Y height (A and B are out of phase)
+        const crimpYA = crimpAmp * zWave(phase)
+        const crimpYB = crimpAmp * zWave(phase + Math.PI)
 
-        const crimpY = sign * crimpAmp * easeCrimp(phase)
-        y += crimpY
+        yA += crimpYA
+        yB += crimpYB
+
+        // Z-Wobble so they cross without intersecting
+        const wobble = zWobbleAmp * Math.sin(phase)
+        zA += wobble
+        zB -= wobble
       }
 
-      points.push(new THREE.Vector3(x, y, z))
+      pointsA.push(new THREE.Vector3(x, yA, zA))
+      pointsB.push(new THREE.Vector3(x, yB, zB))
     }
 
-    const curve = new THREE.CatmullRomCurve3(points)
-    const geometry = new THREE.TubeGeometry(curve, steps, radius, 12, false)
-    const mesh = new THREE.Mesh(geometry, mat)
-    scene.add(mesh)
+    const curveA = new THREE.CatmullRomCurve3(pointsA)
+    const geometryA = new THREE.TubeGeometry(curveA, steps, radiusTransverse, 12, false)
+    const meshA = new THREE.Mesh(geometryA, mat)
+    scene.add(meshA)
+
+    const curveB = new THREE.CatmullRomCurve3(pointsB)
+    const geometryB = new THREE.TubeGeometry(curveB, steps, radiusTransverse, 12, false)
+    const meshB = new THREE.Mesh(geometryB, mat)
+    scene.add(meshB)
   }
 
   // Resize handler
