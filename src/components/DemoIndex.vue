@@ -8,6 +8,8 @@ type DemoKey =
   | 'lathe'
   | 'shape'
   | 'extrude'
+  | 'meshSprite'
+  | 'spriteRain'
   | 'topologyOps'
   | 'transform'
   | 'mirror'
@@ -53,6 +55,16 @@ const demos: Array<{ key: DemoKey; title: string; desc: string }> = [
     key: 'extrude',
     title: 'ExtrudeGeometry',
     desc: '把二维轮廓挤出厚度，生成有体积的立体几何'
+  },
+  {
+    key: 'meshSprite',
+    title: 'Mesh vs Sprite',
+    desc: 'Plane Mesh 与 Sprite 的朝向和用途对比'
+  },
+  {
+    key: 'spriteRain',
+    title: 'Sprite Rain',
+    desc: '使用精灵贴图批量模拟下雨效果'
   },
   {
     key: 'topologyOps',
@@ -126,7 +138,7 @@ const demos: Array<{ key: DemoKey; title: string; desc: string }> = [
   }
 ]
 
-const current = ref<DemoKey>('curves')
+const current = ref<DemoKey>('customTest')
 
 const DemoComponent = computed(() => {
   switch (current.value) {
@@ -142,6 +154,10 @@ const DemoComponent = computed(() => {
       return defineAsyncComponent(() => import('../demos/DemoShapeGeometry.vue'))
     case 'extrude':
       return defineAsyncComponent(() => import('../demos/DemoExtrudeGeometry.vue'))
+    case 'meshSprite':
+      return defineAsyncComponent(() => import('../demos/DemoMeshSpriteDiff.vue'))
+    case 'spriteRain':
+      return defineAsyncComponent(() => import('../demos/DemoSpriteRain.vue'))
     case 'topologyOps':
       return defineAsyncComponent(() => import('../demos/DemoDeleteMergeSplit.vue'))
     case 'transform':

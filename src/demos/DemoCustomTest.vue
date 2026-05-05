@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, onMounted, onBeforeUnmount } from "vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import * as THREE from "three";
 import { createThreeBase } from "@/composables/useThreeBase";
 
@@ -9,93 +9,140 @@ defineOptions({
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let three: ReturnType<typeof createThreeBase> | null = null;
+let inspectionGroup: THREE.Group | null = null;
+
+function disposeObject(object: THREE.Object3D | null) {
+  if (!object) return;
+  object.parent?.remove(object);
+  object.traverse((child) => {
+    const geometry = (child as THREE.Mesh | THREE.LineSegments).geometry;
+    geometry?.dispose?.();
+
+    const material = (child as THREE.Mesh | THREE.LineSegments).material;
+    if (Array.isArray(material)) {
+      material.forEach((item) => item.dispose());
+    } else {
+      material?.dispose?.();
+    }
+  });
+}
 
 onMounted(() => {
-  const canvas = canvasRef.value!;
-  three = createThreeBase(canvas);
-  const { scene, start } = three;
+  three = createThreeBase(canvasRef.value!);
+  const { camera, orbit, renderer, scene, start } = three;
 
-  //   // p1、p3轨迹线起始点坐标
-  //   const p1 = new THREE.Vector3(-100, 0, -100);
-  //   const p3 = new THREE.Vector3(100, 0, 100);
-  //   // 计算p1和p3的中点坐标
-  //   const x2 = (p1.x + p3.x) / 2;
-  //   const z2 = (p1.z + p3.z) / 2;
-  //   const h = 50;
-  //   const p2 = new THREE.Vector3(x2, h, z2);
+  scene.background = new THREE.Color(0x14181c);
+  scene.children.forEach((child) => {
+    if (child.type === "AxesHelper" || child.type === "GridHelper") {
+      child.visible = false;
+    }
+  });
 
-  //   const arr = [p1, p2, p3];
-  //   // 三维样条曲线
-  //   const curve = new THREE.CatmullRomCurve3(arr);
+  camera.fov = 50;
+  camera.position.set(130, 86, 150);
+  camera.updateProjectionMatrix();
+  orbit.target.set(0, 60, 0);
+  orbit.minDistance = 90;
+  orbit.maxDistance = 320;
+  orbit.update();
 
-  // const p1 = new THREE.Vector3(-100, 0, -100);
-  // const p3 = new THREE.Vector3(100, 0, 100);
-  // // 计算p1和p3的中点坐标
-  // const x2 = (p1.x + p3.x)/2;
-  // const z2 = (p1.z + p3.z)/2;
-  // const h = 100;
-  // const p2 = new THREE.Vector3(x2, h, z2);
-  // // 三维二次贝赛尔曲线
-  // const curve = new THREE.QuadraticBezierCurve3(p1, p2, p3);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-  //   // 从曲线上取点
-  //   const points = curve.getPoints(100);
+  inspectionGroup = new THREE.Group();
 
-  // const R = 80; //圆弧半径
-  // const H = 200; //直线部分高度
-  // // 直线1
-  // const line1 = new THREE.LineCurve(
-  //   new THREE.Vector2(R, H),
-  //   new THREE.Vector2(R, 0),
-  // );
-  // // 圆弧
-  // const arc = new THREE.ArcCurve(0, 0, R, 0, Math.PI, true);
-  // // 直线2
-  // const line2 = new THREE.LineCurve(
-  //   new THREE.Vector2(-R, 0),
-  //   new THREE.Vector2(-R, H),
-  // );
+  const ambientLight = new THREE.AmbientLight(0xffffff, 0.18);
+  inspectionGroup.add(ambientLight);
 
-  // // CurvePath创建一个组合曲线对象
-  // const CurvePath = new THREE.CurvePath();
-  // //line1, arc, line2拼接出来一个U型轮廓曲线，注意顺序
-  // CurvePath.curves.push(line1, arc, line2);
-  // const points = CurvePath.getPoints(16);
+  const hemiLight = new THREE.HemisphereLight(0xdbeafe, 0x6b5540, 0.55);
+  inspectionGroup.add(hemiLight);
 
-  // // 用这些点创建一条可渲染的线
-  // const geometry = new THREE.BufferGeometry().setFromPoints(points);
-  // const material = new THREE.LineBasicMaterial({ color: 0xff0000 });
+  const keyLight = new THREE.DirectionalLight(0xffffff, 2.6);
+  keyLight.position.set(120, 180, 110);
+  keyLight.castShadow = true;
+  keyLight.shadow.mapSize.set(2048, 2048);
+  keyLight.shadow.camera.near = 1;
+  keyLight.shadow.camera.far = 360;
+  keyLight.shadow.camera.left = -140;
+  keyLight.shadow.camera.right = 140;
+  keyLight.shadow.camera.top = 160;
+  keyLight.shadow.camera.bottom = -160;
+  keyLight.shadow.bias = -0.0002;
+  inspectionGroup.add(keyLight);
 
-  // const curveObject = new THREE.Line(geometry, material);
-  // scene.add(curveObject);
+  const rimLight = new THREE.PointLight(0xa5d8ff, 28, 320, 2);
+  rimLight.position.set(-100, 75, 95);
+  inspectionGroup.add(rimLight);
 
-  const curve = new THREE.CatmullRomCurve3([
-    new THREE.Vector3(-100, 0, -100),
-    new THREE.Vector3(0, 50, 0),
-    new THREE.Vector3(100, 0, 100),
-  ]);
-
-  const geometry = new THREE.TubeGeometry(
-    curve,
-    100, // 管子沿路径的分段数
-    5, // 半径
-    8, // 圆截面分段数
-    false, // 是否闭合
+  const floor = new THREE.Mesh(
+    new THREE.PlaneGeometry(280, 280),
+    new THREE.MeshStandardMaterial({
+      color: 0xd4cec1,
+      roughness: 0.96,
+      metalness: 0.02,
+    }),
   );
+  floor.rotation.x = -Math.PI / 2;
+  floor.receiveShadow = true;
+  inspectionGroup.add(floor);
 
-  const mesh = new THREE.Mesh(
-    geometry,
-    new THREE.MeshBasicMaterial()
+  const backdrop = new THREE.Mesh(
+    new THREE.PlaneGeometry(280, 180),
+    new THREE.MeshStandardMaterial({
+      color: 0x2a3038,
+      roughness: 0.98,
+      metalness: 0.02,
+    }),
   );
-  scene.add(mesh);
+  backdrop.position.set(0, 60, -100);
+  backdrop.receiveShadow = true;
+  inspectionGroup.add(backdrop);
 
+  const cylinder = new THREE.Mesh(
+    new THREE.CylinderGeometry(40, 40, 120, 48),
+    new THREE.MeshStandardMaterial({
+      color: "#7a8e2c",
+      roughness: 0.24,
+      metalness: 0.04,
+    }),
+  );
+  cylinder.position.set(0, 60, 0);
+  cylinder.castShadow = true;
+  cylinder.receiveShadow = true;
+  inspectionGroup.add(cylinder);
+
+  scene.add(inspectionGroup);
   start();
+});
+
+onBeforeUnmount(() => {
+  disposeObject(inspectionGroup);
+  inspectionGroup = null;
+
+  three?.dispose();
+  three = null;
 });
 </script>
 
 <template>
   <div style="position: relative; width: 800px; height: 800px">
     <canvas ref="canvasRef" style="width: 800px; height: 800px" />
+    <div
+      style="
+        position: absolute;
+        left: 12px;
+        top: 12px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: rgba(20, 24, 28, 0.82);
+        color: #f5f5f4;
+        font-size: 12px;
+        line-height: 1.6;
+        pointer-events: none;
+      "
+    >
+      radius 40, diameter 80, length 120, radial segments 48
+    </div>
   </div>
 </template>
 
