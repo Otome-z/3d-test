@@ -24,6 +24,7 @@ type DemoKey =
   | 'DemoEditableMesh'
   | 'DemoLight'
   | 'customTest'
+  | 'wovenMesh'
 
 const demos: Array<{ key: DemoKey; title: string; desc: string }> = [
   {
@@ -135,6 +136,11 @@ const demos: Array<{ key: DemoKey; title: string; desc: string }> = [
     key: 'customTest',
     title: '自定义测试',
     desc: '自定义测试'
+  },
+  {
+    key: 'wovenMesh',
+    title: '3D 编织网',
+    desc: '用 TubeGeometry 绘制基于曲面的编织金属网'
   }
 ]
 
@@ -186,6 +192,8 @@ const DemoComponent = computed(() => {
       return defineAsyncComponent(() => import('../demos/DemoLight2.vue'))
     case 'customTest':
       return defineAsyncComponent(() => import('../demos/DemoCustomTest.vue'))
+    case 'wovenMesh':
+      return defineAsyncComponent(() => import('../demos/DemoWovenMesh.vue'))
     default:
       return defineAsyncComponent(() => import('../demos/DemoTransform.vue'))
   }
