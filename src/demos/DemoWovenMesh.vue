@@ -24,9 +24,9 @@ const zWobbleAmp = 0.15 // Amplitude of Z-axis wobble so the two lines twist aro
 const startX = -((Nx - 1) * spacingX) / 2
 const startZ = -((Nz - 1) * spacingZ) / 2
 
-// Macro surface function (Gaussian bump)
+// Macro surface function (flat plane)
 function surfaceY(x: number, z: number): number {
-  return 3.0 * Math.exp(-(x * x + z * z) / 25)
+  return 0
 }
 
 // Z-shaped wave function for Y height
